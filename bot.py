@@ -11,19 +11,20 @@ import os
 print("🚀 বট লোড হচ্ছে...")
 
 # ============= আপনার ডেটা =============
-BOT_TOKEN = os.environ.get('BOT_TOKEN', "8727135279:AAHlZ9uj5aRCLca1J8HrKyPmVtwXX-eooxI")
+BOT_TOKEN = os.environ.get('BOT_TOKEN', "8807543327:AAFxZsJgSbi4wvl0pv1K_yWv6eu0MpkN500")
 USERNAME = os.environ.get('USERNAME', "Rabbi2780")
 API_KEY = os.environ.get('API_KEY', "L0J0SG9iVkl2SUxiQ0VEUlZ6SE5zUT09")
 API_BASE_URL = "https://api.durianrcs.com/out/ext_api"
 
-# ============= ডিফল্ট প্রোজেক্ট সেটিংস =============
-DEFAULT_PID = "0257"  # আপনার Project ID
-DEFAULT_SERIAL = "2"  # single
-DEFAULT_CUY = "bd"    # ডিফল্ট দেশ
+# ============= প্রোজেক্ট সেটিংস =============
+DEFAULT_PID = "0257"
+DEFAULT_SERIAL = "2"
+MAX_RETRIES = 30  # সর্বোচ্চ ৩০ বার চেষ্টা
+RETRY_DELAY = 2   # ২ সেকেন্ড পর পর চেষ্টা
 
 print("✅ কনফিগারেশন লোড হয়েছে")
 
-# ============= সাপোর্টেড কান্ট্রি লিস্ট (২২৩টি দেশ) =============
+# ============= সাপোর্টেড কান্ট্রি লিস্ট =============
 COUNTRIES = [
     {"serial": "1", "name": "Argentina", "cuy": "ar", "short": ["arg", "argentina"]},
     {"serial": "2", "name": "Australia", "cuy": "au", "short": ["aus", "australia"]},
@@ -362,9 +363,9 @@ def handle_text_messages(message):
         bot.send_message(chat_id, 
             f"📱 *কয়টি নাম্বার নিতে চান?*\n\n"
             f"🌍 দেশ: {country['name']}\n"
-            f"📌 প্রোজেক্ট আইডি: `{DEFAULT_PID}`\n"
+            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
             f"💰 পয়েন্ট খরচ: ১০০\n"
-            f"📊 টাইপ: সিঙ্গেল", 
+            f"⏳ নাম্বার না পাওয়া পর্যন্ত চেষ্টা করবে...", 
             parse_mode='Markdown', 
             reply_markup=markup
         )
@@ -411,9 +412,7 @@ def handle_inline_callback(call):
         bot.send_message(chat_id, 
             f"✅ *কান্ট্রি সিলেক্ট করা হয়েছে!*\n\n"
             f"🌍 {country_name}\n"
-            f"📌 প্রোজেক্ট আইডি: `{DEFAULT_PID}`\n"
-            f"💰 পয়েন্ট খরচ: ১০০\n"
-            f"📊 টাইপ: সিঙ্গেল", 
+            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`", 
             parse_mode='Markdown',
             reply_markup=get_main_keyboard()
         )
@@ -477,42 +476,41 @@ def send_welcome(message):
         f"✅ *একাউন্ট:* {USERNAME}\n"
         f"💰 *ব্যালেন্স:* {balance}\n"
         f"🌍 *বর্তমান দেশ:* {user_country[str(chat_id)]['name']}\n"
-        f"📌 *প্রোজেক্ট আইডি:* `{DEFAULT_PID}`\n"
+        f"📌 *প্রোজেক্ট:* `{DEFAULT_PID}`\n"
         f"💰 *পয়েন্ট খরচ:* ১০০\n"
-        f"📊 *টাইপ:* সিঙ্গেল\n"
+        f"⏳ *নাম্বার না পাওয়া পর্যন্ত চেষ্টা করবে*\n"
         f"📋 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
-        f"👇 *নিচের বাটন ব্যবহার করুন*\n"
-        f"🔍 *Search Country* → নাম/শর্টকাট দিয়ে দেশ খুঁজুন", 
+        f"👇 *নিচের বাটন ব্যবহার করুন*", 
         parse_mode='Markdown', 
         reply_markup=get_main_keyboard()
     )
 
-# ============= নাম্বার নেওয়া =============
+# ============= নাম্বার নেওয়া (রিট্রাই মেকানিজম সহ) =============
 def get_multiple_numbers(chat_id, count):
     try:
         country = user_country.get(str(chat_id), {'serial': '56', 'cuy': 'bd', 'name': 'Bangladesh'})
         
-        bot.send_message(chat_id, 
-            f"⏳ {count}টি নাম্বার সংগ্রহ করা হচ্ছে...\n"
+        status_msg = bot.send_message(chat_id, 
+            f"⏳ *নাম্বার সংগ্রহ করা হচ্ছে...*\n"
             f"🌍 দেশ: {country['name']}\n"
-            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`"
+            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+            f"🔄 {MAX_RETRIES} বার পর্যন্ত চেষ্টা করবে..."
         )
         
         numbers = []
         success_count = 0
         
-        # শুধু DEFAULT_PID ব্যবহার করুন
-        pids_to_try = [DEFAULT_PID]
-        
         for i in range(count):
-            try:
-                found = False
-                for pid in pids_to_try:
+            found = False
+            retry_count = 0
+            
+            while retry_count < MAX_RETRIES and not found:
+                try:
                     params = {
                         'name': USERNAME,
                         'ApiKey': API_KEY,
                         'cuy': country['cuy'],
-                        'pid': pid,
+                        'pid': DEFAULT_PID,
                         'num': 1,
                         'noblack': 0,
                         'serial': 2,
@@ -520,7 +518,7 @@ def get_multiple_numbers(chat_id, count):
                         'vip': 'null'
                     }
                     data = call_api('getMobile', params)
-                    print(f"📊 PID {pid}: {data}")
+                    print(f"📊 চেষ্টা {retry_count+1}/{MAX_RETRIES}: {data}")
                     
                     if data.get('code') == 200:
                         phone_number = data.get('data')
@@ -536,7 +534,7 @@ def get_multiple_numbers(chat_id, count):
                             user_data[chat_id_str]['numbers'].append({
                                 'phone': phone_number,
                                 'timestamp': time.time(),
-                                'pid': pid,
+                                'pid': DEFAULT_PID,
                                 'serial': country['serial'],
                                 'cuy': country['cuy'],
                                 'country': country['name'],
@@ -549,25 +547,61 @@ def get_multiple_numbers(chat_id, count):
                             break
                     else:
                         error_msg = data.get('msg', 'Unknown error')
-                        print(f"❌ PID {pid} ব্যর্থ: {error_msg}")
+                        print(f"❌ চেষ্টা {retry_count+1} ব্যর্থ: {error_msg}")
                         
                         if data.get('code') == 403:
                             bot.send_message(chat_id, "⚠️ ব্যালেন্স কম! রিচার্জ করুন।")
                             return
                         elif data.get('code') == 904:
-                            bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {pid} সঠিক নয়!")
+                            bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {DEFAULT_PID} সঠিক নয়!")
+                            return
+                        elif data.get('code') == 906:
+                            # নাম্বার লিস্ট খালি - রিট্রাই চালিয়ে যান
+                            pass
                         elif data.get('code') == 400906:
                             bot.send_message(chat_id, f"⚠️ Serial প্যারামিটার ভুল!")
-                        elif data.get('code') == 400:
-                            bot.send_message(chat_id, f"⚠️ সিস্টেম এরর! আবার চেষ্টা করুন।")
-                
-                if not found:
-                    bot.send_message(chat_id, f"⚠️ নাম্বার {i+1} পেতে ব্যর্থ")
-                
-                time.sleep(1)  # ১ সেকেন্ড অপেক্ষা
-                
-            except Exception as e:
-                bot.send_message(chat_id, f"❌ {str(e)}")
+                            return
+                    
+                    retry_count += 1
+                    
+                    # প্রতি ৫ চেষ্টা পর পর স্ট্যাটাস আপডেট করুন
+                    if retry_count % 5 == 0:
+                        try:
+                            bot.edit_message_text(
+                                f"⏳ *নাম্বার সংগ্রহ করা হচ্ছে...*\n"
+                                f"🌍 দেশ: {country['name']}\n"
+                                f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+                                f"🔄 চেষ্টা {retry_count}/{MAX_RETRIES}...",
+                                chat_id,
+                                status_msg.message_id,
+                                parse_mode='Markdown'
+                            )
+                        except:
+                            pass
+                    
+                    time.sleep(RETRY_DELAY)
+                    
+                except Exception as e:
+                    print(f"❌ এরর: {e}")
+                    retry_count += 1
+                    time.sleep(RETRY_DELAY)
+            
+            if not found:
+                bot.send_message(chat_id, f"⚠️ নাম্বার {i+1} পেতে {MAX_RETRIES} বার চেষ্টা ব্যর্থ!")
+        
+        # স্ট্যাটাস মেসেজ আপডেট করুন
+        try:
+            bot.edit_message_text(
+                f"✅ *নাম্বার সংগ্রহ শেষ!*\n"
+                f"🌍 দেশ: {country['name']}\n"
+                f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+                f"📊 পেয়েছে: {success_count}টি",
+                chat_id,
+                status_msg.message_id,
+                parse_mode='Markdown'
+            )
+        except:
+            pass
         
         if success_count > 0:
             numbers_text = "\n".join([f"📱 `{num}`" for num in numbers])
@@ -588,11 +622,14 @@ def get_multiple_numbers(chat_id, count):
             bot.send_message(chat_id, "👇 ডিটেইলস:", reply_markup=markup)
         else:
             bot.send_message(chat_id, 
-                f"❌ কোনো নাম্বার পাইনি!\n\n"
-                f"💡 *টিপস:*\n"
+                f"❌ *কোনো নাম্বার পাইনি!*\n\n"
+                f"💡 *কারণ:*\n"
+                f"• {MAX_RETRIES} বার চেষ্টা করেও নাম্বার পাওয়া যায়নি\n"
+                f"• API তে নাম্বার ফাকা থাকতে পারে\n\n"
+                f"📌 *পরামর্শ:*\n"
+                f"• ১-২ মিনিট পর আবার চেষ্টা করুন\n"
                 f"• অন্য দেশ ট্রাই করুন\n"
-                f"• ব্যালেন্স চেক করুন (/balance)\n"
-                f"• প্রোজেক্ট আইডি `{DEFAULT_PID}` চেক করুন"
+                f"• ব্যালেন্স চেক করুন (/balance)"
             )
             
     except Exception as e:
@@ -767,13 +804,14 @@ def show_help(message):
         f"🔍 **Search Country** - নাম/শর্টকাট দিয়ে দেশ খুঁজুন\n"
         f"   যেমন: `bd`, `bangladesh`, `us`, `india`, `uk`\n"
         f"📱 **Get Number** - নাম্বার নিন (৫ মিনিট ভ্যালিড)\n"
+        f"   ⏳ *নাম্বার না পাওয়া পর্যন্ত চেষ্টা করবে*\n"
         f"💰 **Balance** - ব্যালেন্স চেক\n"
         f"📊 **Status** - স্ট্যাটাস দেখুন\n"
         f"📜 **Active Numbers** - অ্যাক্টিভ নাম্বার দেখুন\n"
         f"🗑️ **Clear All** - সব ক্লিয়ার\n\n"
         f"📌 *প্রোজেক্ট আইডি:* `{DEFAULT_PID}`\n"
         f"💰 *পয়েন্ট খরচ:* ১০০\n"
-        f"📊 *টাইপ:* সিঙ্গেল\n"
+        f"🔄 *সর্বোচ্চ চেষ্টা:* {MAX_RETRIES} বার\n"
         f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*", 
         parse_mode='Markdown'
     )
@@ -785,6 +823,7 @@ if __name__ == "__main__":
     print(f"👤 ইউজারনাম: {USERNAME}")
     print(f"📌 প্রোজেক্ট আইডি: {DEFAULT_PID}")
     print(f"💰 পয়েন্ট খরচ: ১০০")
+    print(f"🔄 সর্বোচ্চ চেষ্টা: {MAX_RETRIES} বার")
     print(f"🌍 সাপোর্টেড দেশ: {len(COUNTRIES)}টি")
     print("=" * 50)
     print("✅ বট প্রস্তুত! টেলিগ্রামে /start দিন")
