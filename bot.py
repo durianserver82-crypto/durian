@@ -12,9 +12,14 @@ print("🚀 বট লোড হচ্ছে...")
 
 # ============= আপনার ডেটা =============
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8807543327:AAFxZsJgSbi4wvl0pv1K_yWv6eu0MpkN500")
-USERNAME = os.environ.get('USERNAME', "Tamanna2780")
-API_KEY = os.environ.get('API_KEY', "a1lFSmtHUU5iSVdHdDlPVW9Qc0NwQT09")
+USERNAME = os.environ.get('USERNAME', "Rabbi2780")
+API_KEY = os.environ.get('API_KEY', "L0J0SG9iVkl2SUxiQ0VEUlZ6SE5zUT09")
 API_BASE_URL = "https://api.durianrcs.com/out/ext_api"
+
+# ============= ডিফল্ট প্রোজেক্ট সেটিংস =============
+DEFAULT_PID = "0257"  # আপনার Project ID
+DEFAULT_SERIAL = "2"  # single
+DEFAULT_CUY = "bd"    # ডিফল্ট দেশ
 
 print("✅ কনফিগারেশন লোড হয়েছে")
 
@@ -355,7 +360,11 @@ def handle_text_messages(message):
         markup.add(types.InlineKeyboardButton("❌ বাতিল", callback_data="cancel"))
         country = user_country[str(chat_id)]
         bot.send_message(chat_id, 
-            f"📱 *কয়টি নাম্বার নিতে চান?*\n\n🌍 দেশ: {country['name']}", 
+            f"📱 *কয়টি নাম্বার নিতে চান?*\n\n"
+            f"🌍 দেশ: {country['name']}\n"
+            f"📌 প্রোজেক্ট আইডি: `{DEFAULT_PID}`\n"
+            f"💰 পয়েন্ট খরচ: ১০০\n"
+            f"📊 টাইপ: সিঙ্গেল", 
             parse_mode='Markdown', 
             reply_markup=markup
         )
@@ -400,7 +409,11 @@ def handle_inline_callback(call):
         except:
             pass
         bot.send_message(chat_id, 
-            f"✅ *কান্ট্রি সিলেক্ট করা হয়েছে!*\n\n🌍 {country_name}", 
+            f"✅ *কান্ট্রি সিলেক্ট করা হয়েছে!*\n\n"
+            f"🌍 {country_name}\n"
+            f"📌 প্রোজেক্ট আইডি: `{DEFAULT_PID}`\n"
+            f"💰 পয়েন্ট খরচ: ১০০\n"
+            f"📊 টাইপ: সিঙ্গেল", 
             parse_mode='Markdown',
             reply_markup=get_main_keyboard()
         )
@@ -464,6 +477,9 @@ def send_welcome(message):
         f"✅ *একাউন্ট:* {USERNAME}\n"
         f"💰 *ব্যালেন্স:* {balance}\n"
         f"🌍 *বর্তমান দেশ:* {user_country[str(chat_id)]['name']}\n"
+        f"📌 *প্রোজেক্ট আইডি:* `{DEFAULT_PID}`\n"
+        f"💰 *পয়েন্ট খরচ:* ১০০\n"
+        f"📊 *টাইপ:* সিঙ্গেল\n"
         f"📋 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
         f"👇 *নিচের বাটন ব্যবহার করুন*\n"
         f"🔍 *Search Country* → নাম/শর্টকাট দিয়ে দেশ খুঁজুন", 
@@ -476,12 +492,17 @@ def get_multiple_numbers(chat_id, count):
     try:
         country = user_country.get(str(chat_id), {'serial': '56', 'cuy': 'bd', 'name': 'Bangladesh'})
         
-        bot.send_message(chat_id, f"⏳ {count}টি নাম্বার সংগ্রহ করা হচ্ছে...\n🌍 {country['name']}")
+        bot.send_message(chat_id, 
+            f"⏳ {count}টি নাম্বার সংগ্রহ করা হচ্ছে...\n"
+            f"🌍 দেশ: {country['name']}\n"
+            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`"
+        )
         
         numbers = []
         success_count = 0
         
-        pids_to_try = ["7403", "7402", "7401", "7393", "7392"]
+        # শুধু DEFAULT_PID ব্যবহার করুন
+        pids_to_try = [DEFAULT_PID]
         
         for i in range(count):
             try:
@@ -534,14 +555,16 @@ def get_multiple_numbers(chat_id, count):
                             bot.send_message(chat_id, "⚠️ ব্যালেন্স কম! রিচার্জ করুন।")
                             return
                         elif data.get('code') == 904:
-                            bot.send_message(chat_id, f"⚠️ PID {pid} সঠিক নয়!")
+                            bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {pid} সঠিক নয়!")
                         elif data.get('code') == 400906:
                             bot.send_message(chat_id, f"⚠️ Serial প্যারামিটার ভুল!")
+                        elif data.get('code') == 400:
+                            bot.send_message(chat_id, f"⚠️ সিস্টেম এরর! আবার চেষ্টা করুন।")
                 
                 if not found:
                     bot.send_message(chat_id, f"⚠️ নাম্বার {i+1} পেতে ব্যর্থ")
                 
-                time.sleep(0.5)
+                time.sleep(1)  # ১ সেকেন্ড অপেক্ষা
                 
             except Exception as e:
                 bot.send_message(chat_id, f"❌ {str(e)}")
@@ -551,6 +574,7 @@ def get_multiple_numbers(chat_id, count):
             bot.send_message(chat_id, 
                 f"✅ *{success_count}টি নাম্বার পেলাম!*\n\n{numbers_text}\n\n"
                 f"🌍 দেশ: {country['name']}\n"
+                f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
                 f"⏰ ৫ মিনিট ভ্যালিড\n"
                 f"🤖 অটো OTP সক্রিয়", 
                 parse_mode='Markdown'
@@ -563,7 +587,13 @@ def get_multiple_numbers(chat_id, count):
             markup.add(types.InlineKeyboardButton("🗑️ ক্লিয়ার", callback_data="clear_all"))
             bot.send_message(chat_id, "👇 ডিটেইলস:", reply_markup=markup)
         else:
-            bot.send_message(chat_id, "❌ কোনো নাম্বার পাইনি!")
+            bot.send_message(chat_id, 
+                f"❌ কোনো নাম্বার পাইনি!\n\n"
+                f"💡 *টিপস:*\n"
+                f"• অন্য দেশ ট্রাই করুন\n"
+                f"• ব্যালেন্স চেক করুন (/balance)\n"
+                f"• প্রোজেক্ট আইডি `{DEFAULT_PID}` চেক করুন"
+            )
             
     except Exception as e:
         bot.send_message(chat_id, f"❌ {str(e)}")
@@ -581,13 +611,13 @@ def monitor_otp(chat_id, phone_number):
     start_time = time.time()
     last_msg_count = 0
     
-    pid = "7403"
+    pid = DEFAULT_PID
     serial = "56"
     chat_id_str = str(chat_id)
     if chat_id_str in user_data:
         for num_data in user_data[chat_id_str]['numbers']:
             if num_data['phone'] == phone_number:
-                pid = num_data.get('pid', '7403')
+                pid = num_data.get('pid', DEFAULT_PID)
                 serial = num_data.get('serial', '56')
                 break
     
@@ -617,6 +647,7 @@ def monitor_otp(chat_id, phone_number):
                         f"🔔 *OTP পাওয়া গেছে!*\n\n"
                         f"📱 নাম্বার: `{phone_number}`\n"
                         f"🔑 কোড: `{otp_code}`\n"
+                        f"📌 প্রোজেক্ট: `{pid}`\n"
                         f"⏰ {datetime.now().strftime('%I:%M %p')}", 
                         parse_mode='Markdown'
                     )
@@ -651,7 +682,8 @@ def show_number_details(chat_id, phone):
                     f"📱 `{phone}`\n"
                     f"স্ট্যাটাস: {status}\n"
                     f"OTP: `{otp}`\n"
-                    f"ভ্যালিডিটি: {remaining}s", 
+                    f"ভ্যালিডিটি: {remaining}s\n"
+                    f"📌 প্রোজেক্ট: `{num_data.get('pid', DEFAULT_PID)}`", 
                     parse_mode='Markdown'
                 )
                 break
@@ -719,7 +751,9 @@ def check_balance(message):
             balance = data.get('data', {}).get('score', 'N/A')
             bot.send_message(chat_id, 
                 f"💰 *ব্যালেন্স: {balance}*\n\n"
-                f"👤 *একাউন্ট:* {USERNAME}", 
+                f"👤 *একাউন্ট:* {USERNAME}\n"
+                f"📌 *প্রোজেক্ট:* `{DEFAULT_PID}`\n"
+                f"💰 *পয়েন্ট খরচ:* ১০০", 
                 parse_mode='Markdown'
             )
         else:
@@ -737,7 +771,10 @@ def show_help(message):
         f"📊 **Status** - স্ট্যাটাস দেখুন\n"
         f"📜 **Active Numbers** - অ্যাক্টিভ নাম্বার দেখুন\n"
         f"🗑️ **Clear All** - সব ক্লিয়ার\n\n"
-        f"📌 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*", 
+        f"📌 *প্রোজেক্ট আইডি:* `{DEFAULT_PID}`\n"
+        f"💰 *পয়েন্ট খরচ:* ১০০\n"
+        f"📊 *টাইপ:* সিঙ্গেল\n"
+        f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*", 
         parse_mode='Markdown'
     )
 
@@ -746,6 +783,8 @@ if __name__ == "__main__":
     print("=" * 50)
     print("🤖 ডুরিয়ান আরসিএস বট চালু হচ্ছে...")
     print(f"👤 ইউজারনাম: {USERNAME}")
+    print(f"📌 প্রোজেক্ট আইডি: {DEFAULT_PID}")
+    print(f"💰 পয়েন্ট খরচ: ১০০")
     print(f"🌍 সাপোর্টেড দেশ: {len(COUNTRIES)}টি")
     print("=" * 50)
     print("✅ বট প্রস্তুত! টেলিগ্রামে /start দিন")
