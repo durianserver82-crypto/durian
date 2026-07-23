@@ -19,8 +19,10 @@ API_BASE_URL = "https://api.durianrcs.com/out/ext_api"
 # ============= প্রোজেক্ট সেটিংস =============
 DEFAULT_PID = "0257"
 DEFAULT_SERIAL = "2"
-MAX_RETRIES = 30  # সর্বোচ্চ ৩০ বার চেষ্টা
-RETRY_DELAY = 2   # ২ সেকেন্ড পর পর চেষ্টা
+MAX_RETRIES = 30
+RETRY_DELAY = 2
+OTP_CHECK_INTERVAL = 5  # প্রতি ৫ সেকেন্ড পর OTP চেক করবে
+OTP_TIMEOUT = 300  # ৫ মিনিট পর্যন্ত চেক করবে
 
 print("✅ কনফিগারেশন লোড হয়েছে")
 
@@ -478,7 +480,7 @@ def send_welcome(message):
         f"🌍 *বর্তমান দেশ:* {user_country[str(chat_id)]['name']}\n"
         f"📌 *প্রোজেক্ট:* `{DEFAULT_PID}`\n"
         f"💰 *পয়েন্ট খরচ:* ১০০\n"
-        f"⏳ *নাম্বার না পাওয়া পর্যন্ত চেষ্টা করবে*\n"
+        f"⏳ *OTP অটো রিসিভ সক্রিয়*\n"
         f"📋 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
         f"👇 *নিচের বাটন ব্যবহার করুন*", 
         parse_mode='Markdown', 
@@ -543,6 +545,7 @@ def get_multiple_numbers(chat_id, count):
                                 'full_message': None
                             })
                             
+                            # OTP মনিটরিং স্টার্ট করুন
                             start_monitoring(chat_id, phone_number)
                             break
                     else:
@@ -555,9 +558,6 @@ def get_multiple_numbers(chat_id, count):
                         elif data.get('code') == 904:
                             bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {DEFAULT_PID} সঠিক নয়!")
                             return
-                        elif data.get('code') == 906:
-                            # নাম্বার লিস্ট খালি - রিট্রাই চালিয়ে যান
-                            pass
                         elif data.get('code') == 400906:
                             bot.send_message(chat_id, f"⚠️ Serial প্যারামিটার ভুল!")
                             return
@@ -595,7 +595,8 @@ def get_multiple_numbers(chat_id, count):
                 f"✅ *নাম্বার সংগ্রহ শেষ!*\n"
                 f"🌍 দেশ: {country['name']}\n"
                 f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
-                f"📊 পেয়েছে: {success_count}টি",
+                f"📊 পেয়েছে: {success_count}টি\n"
+                f"🔍 OTP মনিটরিং চলছে...",
                 chat_id,
                 status_msg.message_id,
                 parse_mode='Markdown'
@@ -610,7 +611,8 @@ def get_multiple_numbers(chat_id, count):
                 f"🌍 দেশ: {country['name']}\n"
                 f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
                 f"⏰ ৫ মিনিট ভ্যালিড\n"
-                f"🤖 অটো OTP সক্রিয়", 
+                f"🔍 *OTP আসলেই অটো নোটিফিকেশন পাবেন*\n"
+                f"🤖 কোনো বাটন ক্লিক করতে হবে না!", 
                 parse_mode='Markdown'
             )
             
@@ -635,22 +637,28 @@ def get_multiple_numbers(chat_id, count):
     except Exception as e:
         bot.send_message(chat_id, f"❌ {str(e)}")
 
-# ============= OTP মনিটরিং =============
+# ============= OTP মনিটরিং (অটো রিসিভ) =============
 def start_monitoring(chat_id, phone_number):
+    """নাম্বারের জন্য OTP মনিটরিং থ্রেড স্টার্ট করে"""
     thread_key = f"{chat_id}_{phone_number}"
     if thread_key in monitoring_threads and monitoring_threads[thread_key].is_alive():
         return
+    
+    print(f"🔍 OTP মনিটরিং স্টার্ট: {phone_number}")
     thread = threading.Thread(target=monitor_otp, args=(chat_id, phone_number), daemon=True)
     monitoring_threads[thread_key] = thread
     thread.start()
+    print(f"✅ OTP মনিটরিং থ্রেড চালু: {phone_number}")
 
 def monitor_otp(chat_id, phone_number):
+    """OTP চেক করে এবং পেলে অটো নোটিফিকেশন পাঠায়"""
     start_time = time.time()
     last_msg_count = 0
+    chat_id_str = str(chat_id)
     
+    # নাম্বারের ডেটা খুঁজুন
     pid = DEFAULT_PID
     serial = "56"
-    chat_id_str = str(chat_id)
     if chat_id_str in user_data:
         for num_data in user_data[chat_id_str]['numbers']:
             if num_data['phone'] == phone_number:
@@ -658,7 +666,19 @@ def monitor_otp(chat_id, phone_number):
                 serial = num_data.get('serial', '56')
                 break
     
-    while time.time() - start_time < 300:
+    print(f"👀 OTP মনিটরিং: {phone_number} (PID: {pid})")
+    
+    # প্রথম নোটিফিকেশন: OTP চেক করা শুরু হয়েছে
+    bot.send_message(chat_id, 
+        f"🔍 *OTP মনিটরিং সক্রিয়!*\n\n"
+        f"📱 নাম্বার: `{phone_number}`\n"
+        f"⏳ OTP আসলেই অটো নোটিফিকেশন পাবেন\n"
+        f"🔄 প্রতি {OTP_CHECK_INTERVAL} সেকেন্ড পর পর চেক করা হবে\n"
+        f"⏰ সর্বোচ্চ {OTP_TIMEOUT//60} মিনিট পর্যন্ত চেক করবে",
+        parse_mode='Markdown'
+    )
+    
+    while time.time() - start_time < OTP_TIMEOUT:
         try:
             params = {
                 'name': USERNAME,
@@ -672,6 +692,7 @@ def monitor_otp(chat_id, phone_number):
             if data.get('code') == 200:
                 otp_code = data.get('data')
                 if otp_code:
+                    # OTP পাওয়া গেছে!
                     if chat_id_str in user_data:
                         for num_data in user_data[chat_id_str]['numbers']:
                             if num_data['phone'] == phone_number:
@@ -680,31 +701,57 @@ def monitor_otp(chat_id, phone_number):
                                 num_data['full_message'] = otp_code
                                 break
                     
+                    # OTP নোটিফিকেশন পাঠান
                     bot.send_message(chat_id, 
                         f"🔔 *OTP পাওয়া গেছে!*\n\n"
                         f"📱 নাম্বার: `{phone_number}`\n"
                         f"🔑 কোড: `{otp_code}`\n"
                         f"📌 প্রোজেক্ট: `{pid}`\n"
-                        f"⏰ {datetime.now().strftime('%I:%M %p')}", 
+                        f"⏰ {datetime.now().strftime('%I:%M:%S %p')}\n\n"
+                        f"✅ OTP সফলভাবে রিসিভ হয়েছে!",
                         parse_mode='Markdown'
                     )
-                    break
+                    
+                    print(f"✅ OTP পাওয়া গেছে: {phone_number} -> {otp_code}")
+                    break  # OTP পেলে মনিটরিং বন্ধ করুন
             
             elif data.get('code') == 908:
+                # SMS এখনো আসেনি - চালিয়ে যান
                 pass
             elif data.get('code') == 405:
-                bot.send_message(chat_id, f"⚠️ {phone_number} এর জন্য SMS পাওয়া যায়নি")
+                # SMS পাওয়া যায়নি
+                bot.send_message(chat_id, 
+                    f"⚠️ {phone_number} এর জন্য SMS পাওয়া যায়নি\n"
+                    f"📌 অন্য সার্ভিস থেকে OTP পাঠানোর চেষ্টা করুন",
+                    parse_mode='Markdown'
+                )
                 break
             
-            time.sleep(15)
+            # প্রতি চেকের পর কিছুক্ষণ অপেক্ষা
+            time.sleep(OTP_CHECK_INTERVAL)
             
         except Exception as e:
-            print(f"⚠️ {e}")
-            time.sleep(15)
+            print(f"⚠️ OTP মনিটরিং এরর: {e}")
+            time.sleep(OTP_CHECK_INTERVAL)
     
+    # টাইমআউট হলে নোটিফিকেশন
+    if time.time() - start_time >= OTP_TIMEOUT:
+        bot.send_message(chat_id, 
+            f"⏰ *OTP মনিটরিং টাইমআউট!*\n\n"
+            f"📱 নাম্বার: `{phone_number}`\n"
+            f"⏳ {OTP_TIMEOUT//60} মিনিট হয়ে গেছে, OTP পাওয়া যায়নি\n\n"
+            f"💡 *পরামর্শ:*\n"
+            f"• নতুন নাম্বার নিয়ে চেষ্টা করুন\n"
+            f"• OTP পুনরায় পাঠানোর চেষ্টা করুন",
+            parse_mode='Markdown'
+        )
+    
+    # থ্রেড ক্লিনআপ
     thread_key = f"{chat_id}_{phone_number}"
     if thread_key in monitoring_threads:
         del monitoring_threads[thread_key]
+    
+    print(f"⏹️ OTP মনিটরিং বন্ধ: {phone_number}")
 
 # ============= হেল্পার =============
 def show_number_details(chat_id, phone):
@@ -712,9 +759,9 @@ def show_number_details(chat_id, phone):
     if chat_id_str in user_data:
         for num_data in user_data[chat_id_str]['numbers']:
             if num_data['phone'] == phone:
-                status = "✅" if num_data['otp_received'] else "⏳"
+                status = "✅ OTP প্রাপ্ত" if num_data['otp_received'] else "⏳ অপেক্ষমান"
                 otp = num_data['otp_code'] if num_data['otp_code'] else "N/A"
-                remaining = int(300 - (time.time() - num_data['timestamp']))
+                remaining = int(OTP_TIMEOUT - (time.time() - num_data['timestamp']))
                 bot.send_message(chat_id, 
                     f"📱 `{phone}`\n"
                     f"স্ট্যাটাস: {status}\n"
@@ -730,10 +777,10 @@ def show_all_status(chat_id):
     if chat_id_str in user_data:
         text = "📊 *স্ট্যাটাস:*\n\n"
         for num_data in user_data[chat_id_str]['numbers']:
-            status = "✅" if num_data['otp_received'] else "⏳"
+            status = "✅ OTP প্রাপ্ত" if num_data['otp_received'] else "⏳ অপেক্ষমান"
             otp = num_data['otp_code'] if num_data['otp_code'] else "..."
-            remaining = int(300 - (time.time() - num_data['timestamp']))
-            text += f"{status} `{num_data['phone']}` → `{otp}` ({remaining}s)\n"
+            remaining = int(OTP_TIMEOUT - (time.time() - num_data['timestamp']))
+            text += f"{status} `{num_data['phone']}` → OTP: `{otp}` ({remaining}s)\n"
         bot.send_message(chat_id, text, parse_mode='Markdown')
 
 def show_active_numbers(message):
@@ -743,7 +790,7 @@ def show_active_numbers(message):
     if chat_id_str in user_data and user_data[chat_id_str]['numbers']:
         text = "📱 *আপনার অ্যাক্টিভ নাম্বার:*\n\n"
         for i, num_data in enumerate(user_data[chat_id_str]['numbers'], 1):
-            remaining = int(300 - (time.time() - num_data['timestamp']))
+            remaining = int(OTP_TIMEOUT - (time.time() - num_data['timestamp']))
             if remaining > 0:
                 status = "✅ OTP পেয়েছে" if num_data['otp_received'] else "⏳ অপেক্ষমান"
                 text += f"{i}. `{num_data['phone']}`\n   → {status}\n   → {remaining}সেকেন্ড বাকি\n\n"
@@ -812,7 +859,9 @@ def show_help(message):
         f"📌 *প্রোজেক্ট আইডি:* `{DEFAULT_PID}`\n"
         f"💰 *পয়েন্ট খরচ:* ১০০\n"
         f"🔄 *সর্বোচ্চ চেষ্টা:* {MAX_RETRIES} বার\n"
-        f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*", 
+        f"⏱️ *OTP চেক ইন্টারভাল:* {OTP_CHECK_INTERVAL} সেকেন্ড\n"
+        f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
+        f"✨ *অটো OTP:* OTP আসলেই নিজে থেকেই চলে আসবে!", 
         parse_mode='Markdown'
     )
 
@@ -824,9 +873,11 @@ if __name__ == "__main__":
     print(f"📌 প্রোজেক্ট আইডি: {DEFAULT_PID}")
     print(f"💰 পয়েন্ট খরচ: ১০০")
     print(f"🔄 সর্বোচ্চ চেষ্টা: {MAX_RETRIES} বার")
+    print(f"⏱️ OTP চেক ইন্টারভাল: {OTP_CHECK_INTERVAL} সেকেন্ড")
     print(f"🌍 সাপোর্টেড দেশ: {len(COUNTRIES)}টি")
     print("=" * 50)
-    print("✅ বট প্রস্তুত! টেলিগ্রামে /start দিন")
+    print("✅ OTP অটো রিসিভ সক্রিয়!")
+    print("📱 টেলিগ্রামে /start দিন")
     print("=" * 50)
     
     while True:
