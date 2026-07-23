@@ -27,13 +27,11 @@ OTP_TIMEOUT = 300
 # ============= গ্রুপ ও ইউজার সেটিংস =============
 GROUP_ID = -1003960397555  # OTP গ্রুপ আইডি
 
-# অনুমোদিত ইউজারদের চ্যাট আইডি (এখানে শুধু যাদের অনুমতি দিতে চান তাদের আইডি দিন)
+# অনুমোদিত ইউজারদের চ্যাট আইডি
 ALLOWED_USERS = [
     8000000507,
-    8525591614,
     # এখানে আপনার চ্যাট আইডি দিন
-    # 123456789,  # উদাহরণ
-    # 987654321,
+    # 123456789,
 ]
 
 print("✅ কনফিগারেশন লোড হয়েছে")
@@ -277,13 +275,11 @@ user_search = {}
 
 # ============= ইউজার চেক ফাংশন =============
 def is_user_allowed(user_id):
-    """ইউজার অনুমোদিত কিনা চেক করে"""
-    if not ALLOWED_USERS:  # যদি লিস্ট খালি থাকে, সবাইকে অনুমতি দিন
+    if not ALLOWED_USERS:
         return True
     return user_id in ALLOWED_USERS
 
 def get_user_identifier(message):
-    """ইউজারের আইডি এবং ইউজারনেম রিটার্ন করে"""
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -341,7 +337,6 @@ def search_country(query):
 def search_country_prompt(message):
     chat_id = message.chat.id
     
-    # ইউজার চেক
     if not is_user_allowed(message.from_user.id):
         bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
         return
@@ -360,7 +355,6 @@ def search_country_prompt(message):
 def handle_text_messages(message):
     chat_id = message.chat.id
     
-    # ইউজার চেক
     if not is_user_allowed(message.from_user.id):
         bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
         return
@@ -438,7 +432,6 @@ def handle_text_messages(message):
 def handle_inline_callback(call):
     chat_id = call.message.chat.id
     
-    # ইউজার চেক
     if not is_user_allowed(call.from_user.id):
         bot.answer_callback_query(call.id, "⛔ আপনি অনুমোদিত নন!")
         return
@@ -511,7 +504,6 @@ def handle_inline_callback(call):
 def send_welcome(message):
     chat_id = message.chat.id
     
-    # ইউজার চেক
     if not is_user_allowed(message.from_user.id):
         bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
         return
@@ -601,7 +593,6 @@ def get_multiple_numbers(chat_id, count, user):
                                 'user': user_identifier
                             })
                             
-                            # OTP মনিটরিং স্টার্ট করুন
                             start_monitoring(chat_id, phone_number, user_identifier)
                             break
                     else:
@@ -693,7 +684,6 @@ def get_multiple_numbers(chat_id, count, user):
 
 # ============= OTP মনিটরিং (অটো রিসিভ) =============
 def start_monitoring(chat_id, phone_number, user_identifier):
-    """নাম্বারের জন্য OTP মনিটরিং থ্রেড স্টার্ট করে"""
     thread_key = f"{chat_id}_{phone_number}"
     if thread_key in monitoring_threads and monitoring_threads[thread_key].is_alive():
         return
@@ -705,7 +695,6 @@ def start_monitoring(chat_id, phone_number, user_identifier):
     print(f"✅ OTP মনিটরিং থ্রেড চালু: {phone_number}")
 
 def monitor_otp(chat_id, phone_number, user_identifier):
-    """OTP চেক করে এবং পেলে অটো নোটিফিকেশন পাঠায়"""
     start_time = time.time()
     last_msg_count = 0
     chat_id_str = str(chat_id)
@@ -721,14 +710,12 @@ def monitor_otp(chat_id, phone_number, user_identifier):
     
     print(f"👀 OTP মনিটরিং: {phone_number} (PID: {pid})")
     
-    # প্রথম নোটিফিকেশন: OTP চেক করা শুরু হয়েছে
+    # শুধু ইউজারকে জানান (গ্রুপে নয়)
     bot.send_message(chat_id, 
         f"🔍 *OTP মনিটরিং সক্রিয়!*\n\n"
         f"📱 নাম্বার: `{phone_number}`\n"
         f"👤 ইউজার: {user_identifier}\n"
-        f"⏳ OTP আসলেই অটো নোটিফিকেশন পাবেন\n"
-        f"🔄 প্রতি {OTP_CHECK_INTERVAL} সেকেন্ড পর পর চেক করা হবে\n"
-        f"⏰ সর্বোচ্চ {OTP_TIMEOUT//60} মিনিট পর্যন্ত চেক করবে",
+        f"⏳ OTP আসলেই অটো নোটিফিকেশন পাবেন",
         parse_mode='Markdown'
     )
     
@@ -755,7 +742,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
                                 num_data['full_message'] = otp_code
                                 break
                     
-                    # OTP নোটিফিকেশন তৈরি
+                    # OTP মেসেজ তৈরি (শুধু OTP)
                     otp_message = (
                         f"🔔 *OTP পাওয়া গেছে!*\n\n"
                         f"📱 নাম্বার: `{phone_number}`\n"
@@ -769,7 +756,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
                     # ১. ইউজারের কাছে পাঠান
                     bot.send_message(chat_id, otp_message, parse_mode='Markdown')
                     
-                    # ২. গ্রুপে পাঠান (যদি গ্রুপ আইডি দেওয়া থাকে)
+                    # ২. শুধু OTP গ্রুপে পাঠান (টাইমআউট/অন্যান্য মেসেজ নয়)
                     if GROUP_ID:
                         try:
                             bot.send_message(GROUP_ID, otp_message, parse_mode='Markdown')
@@ -783,6 +770,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
             elif data.get('code') == 908:
                 pass
             elif data.get('code') == 405:
+                # SMS পাওয়া যায়নি - শুধু ইউজারকে জানান (গ্রুপে নয়)
                 bot.send_message(chat_id, 
                     f"⚠️ {phone_number} এর জন্য SMS পাওয়া যায়নি\n"
                     f"📌 অন্য সার্ভিস থেকে OTP পাঠানোর চেষ্টা করুন",
@@ -796,6 +784,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
             print(f"⚠️ OTP মনিটরিং এরর: {e}")
             time.sleep(OTP_CHECK_INTERVAL)
     
+    # টাইমআউট হলে শুধু ইউজারকে জানান (গ্রুপে নয়)
     if time.time() - start_time >= OTP_TIMEOUT:
         timeout_msg = (
             f"⏰ *OTP মনিটরিং টাইমআউট!*\n\n"
@@ -807,13 +796,8 @@ def monitor_otp(chat_id, phone_number, user_identifier):
             f"• OTP পুনরায় পাঠানোর চেষ্টা করুন"
         )
         
+        # শুধু ইউজারকে পাঠান (গ্রুপে নয়)
         bot.send_message(chat_id, timeout_msg, parse_mode='Markdown')
-        
-        if GROUP_ID:
-            try:
-                bot.send_message(GROUP_ID, timeout_msg, parse_mode='Markdown')
-            except:
-                pass
     
     thread_key = f"{chat_id}_{phone_number}"
     if thread_key in monitoring_threads:
@@ -940,7 +924,7 @@ def show_help(message):
         f"⏱️ *OTP চেক ইন্টারভাল:* {OTP_CHECK_INTERVAL} সেকেন্ড\n"
         f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
         f"✨ *অটো OTP:* OTP আসলেই নিজে থেকেই চলে আসবে!\n"
-        f"📢 *OTP গ্রুপে পাঠানো হবে:* ✅ সক্রিয়", 
+        f"📢 *শুধু OTP গ্রুপে পাঠানো হবে*", 
         parse_mode='Markdown'
     )
 
@@ -957,7 +941,7 @@ if __name__ == "__main__":
     print(f"👥 অনুমোদিত ইউজার: {len(ALLOWED_USERS) if ALLOWED_USERS else 'সবাই'}")
     print(f"🌍 সাপোর্টেড দেশ: {len(COUNTRIES)}টি")
     print("=" * 50)
-    print("✅ OTP অটো রিসিভ সক্রিয়!")
+    print("✅ শুধু OTP গ্রুপে পাঠানো হবে!")
     print("📱 টেলিগ্রামে /start দিন")
     print("=" * 50)
     
