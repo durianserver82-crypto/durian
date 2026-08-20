@@ -18,7 +18,7 @@ API_BASE_URL = "https://api.durianrcs.com/out/ext_api"
 
 # ============= প্রোজেক্ট সেটিংস =============
 DEFAULT_PID = "0257"
-DEFAULT_SERIAL = "2"
+DEFAULT_SERIAL = "2"  # ডিফল্ট সিরিয়াল (সব)
 MAX_RETRIES = 30
 RETRY_DELAY = 2
 OTP_CHECK_INTERVAL = 5
@@ -273,6 +273,7 @@ user_states = {}
 user_country = {}
 user_search = {}
 running_threads = {}  # নাম্বার জেনারেশন থ্রেড ট্র্যাক করার জন্য
+user_serials = {}  # প্রতিটি ইউজারের সিরিয়াল লিস্ট সংরক্ষণ
 
 # ============= ইউজার চেক ফাংশন =============
 def is_user_allowed(user_id):
@@ -289,6 +290,20 @@ def get_user_identifier(message):
     else:
         return f"{first_name} (ID: {user_id})"
 
+# ============= সিরিয়াল ফাংশন =============
+def get_user_serials(chat_id):
+    """ইউজারের সেট করা সিরিয়াল লিস্ট রিটার্ন করে, না থাকলে ['2'] (সব)"""
+    chat_id_str = str(chat_id)
+    if chat_id_str in user_serials and user_serials[chat_id_str]:
+        return user_serials[chat_id_str]
+    return [DEFAULT_SERIAL]
+
+def format_serials_display(serials):
+    """সিরিয়াল লিস্টকে সুন্দরভাবে দেখানোর জন্য"""
+    if not serials or serials == [DEFAULT_SERIAL]:
+        return "সব সিরিয়াল (ডিফল্ট)"
+    return ", ".join(serials)
+
 # ============= কী-বোর্ড =============
 def get_main_keyboard():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -299,8 +314,9 @@ def get_main_keyboard():
     btn5 = types.KeyboardButton('ℹ️ Help')
     btn6 = types.KeyboardButton('🔍 Search Country')
     btn7 = types.KeyboardButton('📜 Active Numbers')
-    btn8 = types.KeyboardButton('🛑 Stop Getting Numbers')
-    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8)
+    btn8 = types.KeyboardButton('🛑 Stop & Show Numbers')
+    btn9 = types.KeyboardButton('🔢 Set Serial')
+    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8, btn9)
     return markup
 
 # ============= API কল =============
@@ -351,6 +367,128 @@ def search_country_prompt(message):
         parse_mode='Markdown'
     )
 
+# ============= সিরিয়াল সেট করার হ্যান্ডলার =============
+@bot.message_handler(func=lambda message: message.text == '🔢 Set Serial')
+def set_serial_prompt(message):
+    chat_id = message.chat.id
+    
+    if not is_user_allowed(message.from_user.id):
+        bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
+        return
+    
+    current_serials = get_user_serials(chat_id)
+    country = user_country.get(str(chat_id), {'name': 'Bangladesh', 'cuy': 'bd'})
+    
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        types.InlineKeyboardButton("➕ একাধিক সিরিয়াল", callback_data="add_serials"),
+        types.InlineKeyboardButton("🔄 রিসেট (সব)", callback_data="reset_serials"),
+        types.InlineKeyboardButton("📋 দেখুন", callback_data="view_serials")
+    )
+    
+    bot.send_message(chat_id,
+        f"🔢 *সিরিয়াল সেটিংস*\n\n"
+        f"🌍 বর্তমান দেশ: {country['name']}\n"
+        f"📌 বর্তমান সিরিয়াল: {format_serials_display(current_serials)}\n\n"
+        f"*নিয়ম:*\n"
+        f"• সিরিয়াল কমা দিয়ে আলাদা করুন\n"
+        f"• যেমন: `93,91,96`\n"
+        f"• ডিফল্ট (সব): `2`\n\n"
+        f"📝 *সিরিয়াল সেট করতে টাইপ করুন:*\n"
+        f"`/setserial 93,91,96`\n"
+        f"অথবা নিচের বাটন ব্যবহার করুন",
+        parse_mode='Markdown',
+        reply_markup=markup
+    )
+    
+    user_states[str(chat_id)] = 'waiting_serial'
+
+@bot.message_handler(commands=['setserial'])
+def set_serial_command(message):
+    chat_id = message.chat.id
+    
+    if not is_user_allowed(message.from_user.id):
+        bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
+        return
+    
+    try:
+        # কমান্ড থেকে আর্গুমেন্ট নেওয়া
+        args = message.text.split(' ', 1)
+        if len(args) < 2:
+            bot.send_message(chat_id, 
+                "❌ *সঠিক ফরম্যাট:* `/setserial 93,91,96`\n\n"
+                "📌 একাধিক সিরিয়াল কমা দিয়ে আলাদা করুন\n"
+                "যেমন: `/setserial 93,91,96`\n"
+                "ডিফল্ট (সব): `/setserial 2`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        serials_text = args[1].strip()
+        serials = [s.strip() for s in serials_text.split(',') if s.strip()]
+        
+        # সিরিয়াল ভ্যালিডেশন
+        valid_serials = []
+        for s in serials:
+            if s.isdigit() and len(s) <= 3:
+                valid_serials.append(s)
+            else:
+                bot.send_message(chat_id, f"❌ `{s}` সঠিক সিরিয়াল নয়! (শুধু সংখ্যা দিন)")
+                return
+        
+        if not valid_serials:
+            bot.send_message(chat_id, "❌ কোনো সঠিক সিরিয়াল পাওয়া যায়নি!")
+            return
+        
+        # সিরিয়াল সেভ করা
+        user_serials[str(chat_id)] = valid_serials
+        bot.send_message(chat_id,
+            f"✅ *সিরিয়াল সেট করা হয়েছে!*\n\n"
+            f"📌 সিরিয়াল: {format_serials_display(valid_serials)}\n"
+            f"🌍 দেশ: {user_country.get(str(chat_id), {}).get('name', 'N/A')}\n\n"
+            f"📱 এখন 'Get Number' ক্লিক করলে এই সিরিয়ালের নাম্বার আসবে",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ {str(e)}")
+
+@bot.message_handler(commands=['resetserial'])
+def reset_serial_command(message):
+    chat_id = message.chat.id
+    
+    if not is_user_allowed(message.from_user.id):
+        bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
+        return
+    
+    if str(chat_id) in user_serials:
+        del user_serials[str(chat_id)]
+    
+    bot.send_message(chat_id,
+        "🔄 *সিরিয়াল রিসেট করা হয়েছে!*\n\n"
+        f"📌 এখন সব সিরিয়ালের নাম্বার আসবে (ডিফল্ট: {DEFAULT_SERIAL})",
+        parse_mode='Markdown'
+    )
+
+@bot.message_handler(commands=['viewserial'])
+def view_serial_command(message):
+    chat_id = message.chat.id
+    
+    if not is_user_allowed(message.from_user.id):
+        bot.send_message(chat_id, "⛔ আপনি এই বট ব্যবহার করার অনুমতি পাননি!")
+        return
+    
+    serials = get_user_serials(chat_id)
+    country = user_country.get(str(chat_id), {}).get('name', 'N/A')
+    
+    bot.send_message(chat_id,
+        f"📋 *বর্তমান সিরিয়াল*\n\n"
+        f"🌍 দেশ: {country}\n"
+        f"📌 সিরিয়াল: {format_serials_display(serials)}\n\n"
+        f"🔢 *সিরিয়াল পরিবর্তন করতে:* `/setserial 93,91`",
+        parse_mode='Markdown'
+    )
+
 # ============= টেক্সট হ্যান্ডলার =============
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
@@ -361,6 +499,30 @@ def handle_text_messages(message):
         return
     
     text = message.text
+    
+    # সিরিয়াল ওয়েটিং স্টেট
+    if user_states.get(str(chat_id)) == 'waiting_serial' and text != '🔢 Set Serial':
+        if text.startswith('/'):
+            return
+        # টেক্সট থেকে সিরিয়াল পার্স করা
+        serials = [s.strip() for s in text.split(',') if s.strip()]
+        valid_serials = []
+        for s in serials:
+            if s.isdigit() and len(s) <= 3:
+                valid_serials.append(s)
+        
+        if valid_serials:
+            user_serials[str(chat_id)] = valid_serials
+            user_states[str(chat_id)] = None
+            bot.send_message(chat_id,
+                f"✅ *সিরিয়াল সেট করা হয়েছে!*\n\n"
+                f"📌 সিরিয়াল: {format_serials_display(valid_serials)}",
+                parse_mode='Markdown',
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            bot.send_message(chat_id, "❌ সঠিক সিরিয়াল দিন! যেমন: `93,91,96`")
+        return
     
     if str(chat_id) in user_search and user_search[str(chat_id)]:
         results = search_country(text)
@@ -400,8 +562,8 @@ def handle_text_messages(message):
         # নাম্বার জেনারেশন শুরু করুন
         start_getting_numbers(message)
     
-    elif text == '🛑 Stop Getting Numbers':
-        stop_getting_numbers(message)
+    elif text == '🛑 Stop & Show Numbers':
+        stop_and_show_numbers(message)
     
     elif text == '💰 Balance' or text == '/balance':
         check_balance(message)
@@ -417,6 +579,9 @@ def handle_text_messages(message):
     
     elif text == '📜 Active Numbers':
         show_active_numbers(message)
+    
+    elif text == '🔢 Set Serial':
+        set_serial_prompt(message)
     
     else:
         bot.send_message(chat_id, "❓ বাটন ব্যবহার করুন:", reply_markup=get_main_keyboard())
@@ -448,9 +613,44 @@ def handle_inline_callback(call):
         bot.send_message(chat_id, 
             f"✅ *কান্ট্রি সিলেক্ট করা হয়েছে!*\n\n"
             f"🌍 {country_name}\n"
-            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`", 
+            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+            f"🔢 সিরিয়াল: {format_serials_display(get_user_serials(chat_id))}", 
             parse_mode='Markdown',
             reply_markup=get_main_keyboard()
+        )
+    
+    elif call.data == 'add_serials':
+        bot.answer_callback_query(call.id, "সিরিয়াল টাইপ করুন")
+        bot.send_message(chat_id,
+            "📝 *সিরিয়াল লিখুন:*\n\n"
+            "একাধিক সিরিয়াল কমা দিয়ে আলাদা করুন\n"
+            "যেমন: `93,91,96`\n"
+            "ডিফল্ট (সব): `2`",
+            parse_mode='Markdown'
+        )
+        user_states[str(chat_id)] = 'waiting_serial'
+    
+    elif call.data == 'reset_serials':
+        if str(chat_id) in user_serials:
+            del user_serials[str(chat_id)]
+        bot.answer_callback_query(call.id, "সিরিয়াল রিসেট!")
+        try:
+            bot.delete_message(chat_id, call.message.message_id)
+        except:
+            pass
+        bot.send_message(chat_id,
+            "🔄 *সিরিয়াল রিসেট করা হয়েছে!*\n\n"
+            f"📌 এখন সব সিরিয়ালের নাম্বার আসবে (ডিফল্ট: {DEFAULT_SERIAL})",
+            parse_mode='Markdown',
+            reply_markup=get_main_keyboard()
+        )
+    
+    elif call.data == 'view_serials':
+        serials = get_user_serials(chat_id)
+        bot.answer_callback_query(call.id, f"সিরিয়াল: {format_serials_display(serials)}")
+        bot.send_message(chat_id,
+            f"📋 *বর্তমান সিরিয়াল:* {format_serials_display(serials)}",
+            parse_mode='Markdown'
         )
     
     elif call.data == 'cancel':
@@ -509,6 +709,7 @@ def send_welcome(message):
         f"💰 *ব্যালেন্স:* {balance}\n"
         f"🌍 *বর্তমান দেশ:* {user_country[str(chat_id)]['name']}\n"
         f"📌 *প্রোজেক্ট:* `{DEFAULT_PID}`\n"
+        f"🔢 *সিরিয়াল:* {format_serials_display(get_user_serials(chat_id))}\n"
         f"💰 *পয়েন্ট খরচ:* ১০০\n"
         f"⏳ *OTP অটো রিসিভ সক্রিয়*\n"
         f"📋 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
@@ -535,25 +736,50 @@ def start_getting_numbers(message):
     }
     running_threads[str(chat_id)]['thread'].start()
     
+    serials = get_user_serials(chat_id)
     bot.send_message(chat_id, 
         f"🔄 *নাম্বার জেনারেশন শুরু হয়েছে!*\n\n"
         f"🌍 দেশ: {user_country[str(chat_id)]['name']}\n"
         f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+        f"🔢 সিরিয়াল: {format_serials_display(serials)}\n"
         f"⏳ নাম্বার আসতে থাকবে...\n\n"
-        f"🛑 *স্টপ করতে 'Stop Getting Numbers' বাটন ক্লিক করুন*",
+        f"🛑 *স্টপ করতে 'Stop & Show Numbers' বাটন ক্লিক করুন*",
         parse_mode='Markdown'
     )
 
-def stop_getting_numbers(message):
+def stop_and_show_numbers(message):
     chat_id = message.chat.id
     
     if str(chat_id) in running_threads:
         running_threads[str(chat_id)]['stop_flag'] = True
-        bot.send_message(chat_id, 
-            f"🛑 *নাম্বার জেনারেশন বন্ধ করা হচ্ছে...*\n\n"
-            f"📊 মোট নাম্বার: {len(user_data.get(str(chat_id), {}).get('numbers', []))}টি",
-            parse_mode='Markdown'
-        )
+        
+        # সব নাম্বার একসাথে দেখান
+        chat_id_str = str(chat_id)
+        if chat_id_str in user_data and user_data[chat_id_str]['numbers']:
+            numbers = user_data[chat_id_str]['numbers']
+            total = len(numbers)
+            
+            # নাম্বার লিস্ট তৈরি
+            number_list = []
+            for i, num_data in enumerate(numbers, 1):
+                number_list.append(f"{i}. {num_data['phone']}")
+            
+            numbers_text = "\n".join(number_list)
+            
+            # কপি করার জন্য ফরম্যাট
+            copy_text = "\n".join([num['phone'] for num in numbers])
+            
+            bot.send_message(chat_id,
+                f"🛑 *নাম্বার জেনারেশন বন্ধ!*\n\n"
+                f"📊 *মোট নাম্বার:* {total}টি\n"
+                f"🌍 দেশ: {user_country[str(chat_id)]['name']}\n"
+                f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n\n"
+                f"📱 *সব নাম্বার:*\n{numbers_text}\n\n"
+                f"📋 *কপি করার জন্য:*\n`{copy_text}`",
+                parse_mode='Markdown'
+            )
+        else:
+            bot.send_message(chat_id, "📭 কোনো নাম্বার পাওয়া যায়নি!")
     else:
         bot.send_message(chat_id, "❌ কোনো নাম্বার জেনারেশন চলছে না!")
 
@@ -563,20 +789,28 @@ def generate_numbers_animated(chat_id, user):
         country = user_country.get(str(chat_id), {'serial': '56', 'cuy': 'bd', 'name': 'Bangladesh'})
         user_identifier = f"@{user.username}" if user.username else user.first_name
         total_numbers = 0
+        serials = get_user_serials(chat_id)
         
         # স্ট্যাটাস মেসেজ
         status_msg = bot.send_message(chat_id, 
             f"⏳ *নাম্বার সংগ্রহ করা হচ্ছে...*\n"
             f"🌍 দেশ: {country['name']}\n"
             f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+            f"🔢 সিরিয়াল: {format_serials_display(serials)}\n"
             f"📊 পেয়েছে: ০টি\n"
             f"🔄 চেষ্টা চলছে...\n\n"
-            f"🛑 *স্টপ করতে 'Stop Getting Numbers' বাটন ক্লিক করুন*",
+            f"🛑 *স্টপ করতে 'Stop & Show Numbers' বাটন ক্লিক করুন*",
             parse_mode='Markdown'
         )
         
+        serial_index = 0
+        
         while not running_threads.get(str(chat_id), {}).get('stop_flag', True):
             try:
+                # প্রতিটি সিরিয়াল দিয়ে চেষ্টা করুন
+                current_serial = serials[serial_index % len(serials)]
+                serial_index += 1
+                
                 params = {
                     'name': USERNAME,
                     'ApiKey': API_KEY,
@@ -584,7 +818,7 @@ def generate_numbers_animated(chat_id, user):
                     'pid': DEFAULT_PID,
                     'num': 1,
                     'noblack': 0,
-                    'serial': 2,
+                    'serial': current_serial,
                     'secret_key': 'null',
                     'vip': 'null'
                 }
@@ -603,7 +837,7 @@ def generate_numbers_animated(chat_id, user):
                             'phone': phone_number,
                             'timestamp': time.time(),
                             'pid': DEFAULT_PID,
-                            'serial': country['serial'],
+                            'serial': current_serial,
                             'cuy': country['cuy'],
                             'country': country['name'],
                             'otp_received': False,
@@ -618,6 +852,7 @@ def generate_numbers_animated(chat_id, user):
                         bot.send_message(chat_id, 
                             f"📱 `{phone_number}`\n"
                             f"✅ নাম্বার পেলাম! (মোট: {total_numbers}টি)\n"
+                            f"🔢 সিরিয়াল: {current_serial}\n"
                             f"🔍 OTP মনিটরিং চলছে...",
                             parse_mode='Markdown'
                         )
@@ -628,9 +863,10 @@ def generate_numbers_animated(chat_id, user):
                                 f"⏳ *নাম্বার সংগ্রহ করা হচ্ছে...*\n"
                                 f"🌍 দেশ: {country['name']}\n"
                                 f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+                                f"🔢 সিরিয়াল: {format_serials_display(serials)}\n"
                                 f"📊 পেয়েছে: {total_numbers}টি\n"
                                 f"🔄 চেষ্টা চলছে...\n\n"
-                                f"🛑 *স্টপ করতে 'Stop Getting Numbers' বাটন ক্লিক করুন*",
+                                f"🛑 *স্টপ করতে 'Stop & Show Numbers' বাটন ক্লিক করুন*",
                                 chat_id,
                                 status_msg.message_id,
                                 parse_mode='Markdown'
@@ -638,12 +874,10 @@ def generate_numbers_animated(chat_id, user):
                         except:
                             pass
                         
-                        # ২ সেকেন্ড অপেক্ষা (API রেট লিমিটের জন্য)
-                        time.sleep(2)
+                        time.sleep(1.5)
                     else:
                         time.sleep(1)
                 else:
-                    # API থেকে ত্রুটি এলেও চেষ্টা চালিয়ে যান
                     error_msg = data.get('msg', 'Unknown error')
                     if data.get('code') == 403:
                         bot.send_message(chat_id, "⚠️ ব্যালেন্স কম! রিচার্জ করুন।")
@@ -651,11 +885,11 @@ def generate_numbers_animated(chat_id, user):
                     elif data.get('code') == 904:
                         bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {DEFAULT_PID} সঠিক নয়!")
                         break
-                    time.sleep(2)
+                    time.sleep(1)
                 
             except Exception as e:
                 print(f"❌ জেনারেশন এরর: {e}")
-                time.sleep(2)
+                time.sleep(1)
         
         # থ্রেড শেষে ক্লিনআপ
         if str(chat_id) in running_threads:
@@ -676,15 +910,33 @@ def generate_numbers_animated(chat_id, user):
         except:
             pass
         
+        # সব নাম্বার একসাথে দেখান
         if total_numbers > 0:
+            chat_id_str = str(chat_id)
+            if chat_id_str in user_data and user_data[chat_id_str]['numbers']:
+                numbers = user_data[chat_id_str]['numbers']
+                number_list = []
+                for i, num_data in enumerate(numbers, 1):
+                    number_list.append(f"{i}. {num_data['phone']}")
+                
+                numbers_text = "\n".join(number_list)
+                copy_text = "\n".join([num['phone'] for num in numbers])
+                
+                bot.send_message(chat_id,
+                    f"📱 *সব নাম্বার একসাথে:*\n\n"
+                    f"{numbers_text}\n\n"
+                    f"📋 *কপি করার জন্য:*\n`{copy_text}`",
+                    parse_mode='Markdown'
+                )
+            
             # অ্যাক্টিভ নাম্বার দেখান
             markup = types.InlineKeyboardMarkup(row_width=2)
-            numbers = user_data.get(str(chat_id), {}).get('numbers', [])[-10:]  # সর্বশেষ ১০টি
+            numbers = user_data.get(str(chat_id), {}).get('numbers', [])[-10:]
             for num_data in numbers:
                 markup.add(types.InlineKeyboardButton(f"📱 {num_data['phone'][-4:]}", callback_data=f"check_{num_data['phone']}"))
             markup.add(types.InlineKeyboardButton("📊 সব স্ট্যাটাস", callback_data="all_status"))
             markup.add(types.InlineKeyboardButton("🗑️ ক্লিয়ার", callback_data="clear_all"))
-            bot.send_message(chat_id, "👇 *সব নাম্বার দেখুন:*", parse_mode='Markdown', reply_markup=markup)
+            bot.send_message(chat_id, "👇 *ডিটেইলস:*", parse_mode='Markdown', reply_markup=markup)
         
     except Exception as e:
         bot.send_message(chat_id, f"❌ জেনারেশন থ্রেড ত্রুটি: {str(e)}")
@@ -772,16 +1024,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
             print(f"⚠️ OTP মনিটরিং এরর: {e}")
             time.sleep(OTP_CHECK_INTERVAL)
     
-    # টাইমআউট হলে
-    if time.time() - start_time >= OTP_TIMEOUT:
-        timeout_msg = (
-            f"⏰ *OTP মনিটরিং টাইমআউট!*\n\n"
-            f"📱 নাম্বার: `{phone_number}`\n"
-            f"👤 ইউজার: {user_identifier}\n"
-            f"⏳ {OTP_TIMEOUT//60} মিনিট হয়ে গেছে, OTP পাওয়া যায়নি"
-        )
-        bot.send_message(chat_id, timeout_msg, parse_mode='Markdown')
-    
+    # টাইমআউট হলে কিছুই করবেন না (মেসেজ আসবে না)
     thread_key = f"{chat_id}_{phone_number}"
     if thread_key in monitoring_threads:
         del monitoring_threads[thread_key]
@@ -798,11 +1041,13 @@ def show_number_details(chat_id, phone):
                 otp = num_data['otp_code'] if num_data['otp_code'] else "N/A"
                 remaining = int(OTP_TIMEOUT - (time.time() - num_data['timestamp']))
                 user_info = num_data.get('user', 'Unknown')
+                serial = num_data.get('serial', 'N/A')
                 bot.send_message(chat_id, 
                     f"📱 `{phone}`\n"
                     f"স্ট্যাটাস: {status}\n"
                     f"OTP: `{otp}`\n"
                     f"👤 ইউজার: {user_info}\n"
+                    f"🔢 সিরিয়াল: {serial}\n"
                     f"ভ্যালিডিটি: {remaining}s\n"
                     f"📌 প্রোজেক্ট: `{num_data.get('pid', DEFAULT_PID)}`", 
                     parse_mode='Markdown'
@@ -818,7 +1063,8 @@ def show_all_status(chat_id):
             otp = num_data['otp_code'] if num_data['otp_code'] else "..."
             remaining = int(OTP_TIMEOUT - (time.time() - num_data['timestamp']))
             user_info = num_data.get('user', 'Unknown')
-            text += f"{status} `{num_data['phone']}` → OTP: `{otp}` ({remaining}s) 👤 {user_info}\n"
+            serial = num_data.get('serial', 'N/A')
+            text += f"{status} `{num_data['phone']}` → OTP: `{otp}` ({remaining}s) 🔢{serial} 👤 {user_info}\n"
         bot.send_message(chat_id, text, parse_mode='Markdown')
 
 def show_active_numbers(message):
@@ -832,7 +1078,8 @@ def show_active_numbers(message):
             if remaining > 0:
                 status = "✅ OTP পেয়েছে" if num_data['otp_received'] else "⏳ অপেক্ষমান"
                 user_info = num_data.get('user', 'Unknown')
-                text += f"{i}. `{num_data['phone']}`\n   → {status}\n   → 👤 {user_info}\n   → {remaining}সেকেন্ড বাকি\n\n"
+                serial = num_data.get('serial', 'N/A')
+                text += f"{i}. `{num_data['phone']}`\n   → {status}\n   → 👤 {user_info}\n   → 🔢{serial}\n   → {remaining}সেকেন্ড বাকি\n\n"
             else:
                 text += f"{i}. `{num_data['phone']}` ⏰ এক্সপায়ার্ড\n\n"
         
@@ -895,9 +1142,11 @@ def show_help(message):
         f"🆔 *আপনার আইডি:* `{user_id}`\n\n"
         f"🔍 **Search Country** - নাম/শর্টকাট দিয়ে দেশ খুঁজুন\n"
         f"   যেমন: `bd`, `bangladesh`, `us`, `india`, `uk`\n"
+        f"🔢 **Set Serial** - সিরিয়াল সেট করুন (একাধিক সিরিয়াল কমা দিয়ে)\n"
+        f"   যেমন: `/setserial 93,91,96`\n"
         f"📱 **Get Number** - নাম্বার নেওয়া শুরু করুন (অটোমেটিক)\n"
         f"   ⏳ *স্টপ না করা পর্যন্ত নাম্বার আসতে থাকবে*\n"
-        f"🛑 **Stop Getting Numbers** - নাম্বার জেনারেশন বন্ধ করুন\n"
+        f"🛑 **Stop & Show Numbers** - নাম্বার জেনারেশন বন্ধ + সব নাম্বার দেখান\n"
         f"💰 **Balance** - ব্যালেন্স চেক\n"
         f"📊 **Status** - স্ট্যাটাস দেখুন\n"
         f"📜 **Active Numbers** - অ্যাক্টিভ নাম্বার দেখুন\n"
@@ -907,7 +1156,8 @@ def show_help(message):
         f"⏱️ *OTP চেক ইন্টারভাল:* {OTP_CHECK_INTERVAL} সেকেন্ড\n"
         f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
         f"✨ *অটো OTP:* OTP আসলেই নিজে থেকেই চলে আসবে!\n"
-        f"📢 *শুধু OTP গ্রুপে পাঠানো হবে*", 
+        f"📢 *শুধু OTP গ্রুপে পাঠানো হবে*\n"
+        f"⏰ *টাইমআউট মেসেজ বন্ধ করা হয়েছে*", 
         parse_mode='Markdown'
     )
 
@@ -915,15 +1165,17 @@ def show_help(message):
 if __name__ == "__main__":
     print("=" * 50)
     print("🤖 ডুরিয়ান আরসিএস বট চালু হচ্ছে...")
-    print(f"👤 ইউজারনাম: {USERNAME}")
+    print(f"👤 ইউজারনেম: {USERNAME}")
     print(f"📌 প্রোজেক্ট আইডি: {DEFAULT_PID}")
     print(f"💰 পয়েন্ট খরচ: ১০০")
     print(f"⏱️ OTP চেক ইন্টারভাল: {OTP_CHECK_INTERVAL} সেকেন্ড")
     print(f"📢 OTP গ্রুপ: {GROUP_ID}")
     print(f"👥 অনুমোদিত ইউজার: {len(ALLOWED_USERS) if ALLOWED_USERS else 'সবাই'}")
     print(f"🌍 সাপোর্টেড দেশ: {len(COUNTRIES)}টি")
+    print(f"🔢 ডিফল্ট সিরিয়াল: {DEFAULT_SERIAL} (সব)")
     print("=" * 50)
     print("✅ শুধু OTP গ্রুপে পাঠানো হবে!")
+    print("⏰ টাইমআউট মেসেজ বন্ধ করা হয়েছে!")
     print("📱 টেলিগ্রামে /start দিন")
     print("=" * 50)
     
