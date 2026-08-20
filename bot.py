@@ -272,6 +272,7 @@ monitoring_threads = {}
 user_states = {}
 user_country = {}
 user_search = {}
+running_threads = {}  # নাম্বার জেনারেশন থ্রেড ট্র্যাক করার জন্য
 
 # ============= ইউজার চেক ফাংশন =============
 def is_user_allowed(user_id):
@@ -282,8 +283,7 @@ def is_user_allowed(user_id):
 def get_user_identifier(message):
     user_id = message.from_user.id
     username = message.from_user.username
-    first_name = message.from_user.first_name
-    
+    first_name = message.from_user.first_name    
     if username:
         return f"@{username} (ID: {user_id})"
     else:
@@ -299,7 +299,8 @@ def get_main_keyboard():
     btn5 = types.KeyboardButton('ℹ️ Help')
     btn6 = types.KeyboardButton('🔍 Search Country')
     btn7 = types.KeyboardButton('📜 Active Numbers')
-    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7)
+    btn8 = types.KeyboardButton('🛑 Stop Getting Numbers')
+    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8)
     return markup
 
 # ============= API কল =============
@@ -391,23 +392,16 @@ def handle_text_messages(message):
         if str(chat_id) not in user_country:
             bot.send_message(chat_id, "❌ আগে 🔍 Search Country দিয়ে দেশ সিলেক্ট করুন!")
             return
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        for i in range(1, 6):
-            markup.add(types.InlineKeyboardButton(f"{i}", callback_data=f"count_{i}"))
-        for i in range(6, 11):
-            markup.add(types.InlineKeyboardButton(f"{i}", callback_data=f"count_{i}"))
-        markup.add(types.InlineKeyboardButton("❌ বাতিল", callback_data="cancel"))
-        country = user_country[str(chat_id)]
-        bot.send_message(chat_id, 
-            f"📱 *কয়টি নাম্বার নিতে চান?*\n\n"
-            f"🌍 দেশ: {country['name']}\n"
-            f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
-            f"💰 পয়েন্ট খরচ: ১০০\n"
-            f"⏳ নাম্বার না পাওয়া পর্যন্ত চেষ্টা করবে...", 
-            parse_mode='Markdown', 
-            reply_markup=markup
-        )
-        user_states[str(chat_id)] = 'waiting_count'
+        
+        # স্টপ থ্রেড ফ্ল্যাগ রিসেট করুন
+        if str(chat_id) in running_threads:
+            running_threads[str(chat_id)]['stop_flag'] = False
+        
+        # নাম্বার জেনারেশন শুরু করুন
+        start_getting_numbers(message)
+    
+    elif text == '🛑 Stop Getting Numbers':
+        stop_getting_numbers(message)
     
     elif text == '💰 Balance' or text == '/balance':
         check_balance(message)
@@ -458,15 +452,6 @@ def handle_inline_callback(call):
             parse_mode='Markdown',
             reply_markup=get_main_keyboard()
         )
-    
-    elif call.data.startswith('count_'):
-        count = int(call.data.split('_')[1])
-        bot.answer_callback_query(call.id, f"{count}টি নাম্বার নেওয়া হচ্ছে...")
-        try:
-            bot.delete_message(chat_id, call.message.message_id)
-        except:
-            pass
-        get_multiple_numbers(chat_id, count, call.from_user)
     
     elif call.data == 'cancel':
         bot.answer_callback_query(call.id, "বাতিল!")
@@ -533,115 +518,157 @@ def send_welcome(message):
         reply_markup=get_main_keyboard()
     )
 
-# ============= নাম্বার নেওয়া (রিট্রাই মেকানিজম সহ) =============
-def get_multiple_numbers(chat_id, count, user):
+# ============= নাম্বার জেনারেশন (এনিমেটেড) =============
+def start_getting_numbers(message):
+    chat_id = message.chat.id
+    user = message.from_user
+    
+    # আগের থ্রেড থাকলে স্টপ করুন
+    if str(chat_id) in running_threads:
+        running_threads[str(chat_id)]['stop_flag'] = True
+        time.sleep(1)
+    
+    # নতুন থ্রেড শুরু করুন
+    running_threads[str(chat_id)] = {
+        'stop_flag': False,
+        'thread': threading.Thread(target=generate_numbers_animated, args=(chat_id, user), daemon=True)
+    }
+    running_threads[str(chat_id)]['thread'].start()
+    
+    bot.send_message(chat_id, 
+        f"🔄 *নাম্বার জেনারেশন শুরু হয়েছে!*\n\n"
+        f"🌍 দেশ: {user_country[str(chat_id)]['name']}\n"
+        f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
+        f"⏳ নাম্বার আসতে থাকবে...\n\n"
+        f"🛑 *স্টপ করতে 'Stop Getting Numbers' বাটন ক্লিক করুন*",
+        parse_mode='Markdown'
+    )
+
+def stop_getting_numbers(message):
+    chat_id = message.chat.id
+    
+    if str(chat_id) in running_threads:
+        running_threads[str(chat_id)]['stop_flag'] = True
+        bot.send_message(chat_id, 
+            f"🛑 *নাম্বার জেনারেশন বন্ধ করা হচ্ছে...*\n\n"
+            f"📊 মোট নাম্বার: {len(user_data.get(str(chat_id), {}).get('numbers', []))}টি",
+            parse_mode='Markdown'
+        )
+    else:
+        bot.send_message(chat_id, "❌ কোনো নাম্বার জেনারেশন চলছে না!")
+
+def generate_numbers_animated(chat_id, user):
+    """নাম্বার জেনারেট করতে থাকবে যতক্ষণ না স্টপ করা হয়"""
     try:
         country = user_country.get(str(chat_id), {'serial': '56', 'cuy': 'bd', 'name': 'Bangladesh'})
         user_identifier = f"@{user.username}" if user.username else user.first_name
+        total_numbers = 0
         
+        # স্ট্যাটাস মেসেজ
         status_msg = bot.send_message(chat_id, 
             f"⏳ *নাম্বার সংগ্রহ করা হচ্ছে...*\n"
             f"🌍 দেশ: {country['name']}\n"
             f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
-            f"🔄 {MAX_RETRIES} বার পর্যন্ত চেষ্টা করবে..."
+            f"📊 পেয়েছে: ০টি\n"
+            f"🔄 চেষ্টা চলছে...\n\n"
+            f"🛑 *স্টপ করতে 'Stop Getting Numbers' বাটন ক্লিক করুন*",
+            parse_mode='Markdown'
         )
         
-        numbers = []
-        success_count = 0
-        
-        for i in range(count):
-            found = False
-            retry_count = 0
-            
-            while retry_count < MAX_RETRIES and not found:
-                try:
-                    params = {
-                        'name': USERNAME,
-                        'ApiKey': API_KEY,
-                        'cuy': country['cuy'],
-                        'pid': DEFAULT_PID,
-                        'num': 1,
-                        'noblack': 0,
-                        'serial': 2,
-                        'secret_key': 'null',
-                        'vip': 'null'
-                    }
-                    data = call_api('getMobile', params)
-                    print(f"📊 চেষ্টা {retry_count+1}/{MAX_RETRIES}: {data}")
-                    
-                    if data.get('code') == 200:
-                        phone_number = data.get('data')
-                        if phone_number and isinstance(phone_number, str):
-                            numbers.append(phone_number)
-                            success_count += 1
-                            found = True
-                            
-                            chat_id_str = str(chat_id)
-                            if chat_id_str not in user_data:
-                                user_data[chat_id_str] = {'numbers': []}
-                            
-                            user_data[chat_id_str]['numbers'].append({
-                                'phone': phone_number,
-                                'timestamp': time.time(),
-                                'pid': DEFAULT_PID,
-                                'serial': country['serial'],
-                                'cuy': country['cuy'],
-                                'country': country['name'],
-                                'otp_received': False,
-                                'otp_code': None,
-                                'full_message': None,
-                                'user': user_identifier
-                            })
-                            
-                            start_monitoring(chat_id, phone_number, user_identifier)
-                            break
-                    else:
-                        error_msg = data.get('msg', 'Unknown error')
-                        print(f"❌ চেষ্টা {retry_count+1} ব্যর্থ: {error_msg}")
+        while not running_threads.get(str(chat_id), {}).get('stop_flag', True):
+            try:
+                params = {
+                    'name': USERNAME,
+                    'ApiKey': API_KEY,
+                    'cuy': country['cuy'],
+                    'pid': DEFAULT_PID,
+                    'num': 1,
+                    'noblack': 0,
+                    'serial': 2,
+                    'secret_key': 'null',
+                    'vip': 'null'
+                }
+                data = call_api('getMobile', params)
+                
+                if data.get('code') == 200:
+                    phone_number = data.get('data')
+                    if phone_number and isinstance(phone_number, str):
+                        total_numbers += 1
                         
-                        if data.get('code') == 403:
-                            bot.send_message(chat_id, "⚠️ ব্যালেন্স কম! রিচার্জ করুন।")
-                            return
-                        elif data.get('code') == 904:
-                            bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {DEFAULT_PID} সঠিক নয়!")
-                            return
-                        elif data.get('code') == 400906:
-                            bot.send_message(chat_id, f"⚠️ Serial প্যারামিটার ভুল!")
-                            return
-                    
-                    retry_count += 1
-                    
-                    if retry_count % 5 == 0:
+                        chat_id_str = str(chat_id)
+                        if chat_id_str not in user_data:
+                            user_data[chat_id_str] = {'numbers': []}
+                        
+                        user_data[chat_id_str]['numbers'].append({
+                            'phone': phone_number,
+                            'timestamp': time.time(),
+                            'pid': DEFAULT_PID,
+                            'serial': country['serial'],
+                            'cuy': country['cuy'],
+                            'country': country['name'],
+                            'otp_received': False,
+                            'otp_code': None,
+                            'full_message': None,
+                            'user': user_identifier
+                        })
+                        
+                        start_monitoring(chat_id, phone_number, user_identifier)
+                        
+                        # নাম্বার দেখান
+                        bot.send_message(chat_id, 
+                            f"📱 `{phone_number}`\n"
+                            f"✅ নাম্বার পেলাম! (মোট: {total_numbers}টি)\n"
+                            f"🔍 OTP মনিটরিং চলছে...",
+                            parse_mode='Markdown'
+                        )
+                        
+                        # স্ট্যাটাস আপডেট
                         try:
                             bot.edit_message_text(
                                 f"⏳ *নাম্বার সংগ্রহ করা হচ্ছে...*\n"
                                 f"🌍 দেশ: {country['name']}\n"
                                 f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
-                                f"🔄 চেষ্টা {retry_count}/{MAX_RETRIES}...",
+                                f"📊 পেয়েছে: {total_numbers}টি\n"
+                                f"🔄 চেষ্টা চলছে...\n\n"
+                                f"🛑 *স্টপ করতে 'Stop Getting Numbers' বাটন ক্লিক করুন*",
                                 chat_id,
                                 status_msg.message_id,
                                 parse_mode='Markdown'
                             )
                         except:
                             pass
-                    
-                    time.sleep(RETRY_DELAY)
-                    
-                except Exception as e:
-                    print(f"❌ এরর: {e}")
-                    retry_count += 1
-                    time.sleep(RETRY_DELAY)
-            
-            if not found:
-                bot.send_message(chat_id, f"⚠️ নাম্বার {i+1} পেতে {MAX_RETRIES} বার চেষ্টা ব্যর্থ!")
+                        
+                        # ২ সেকেন্ড অপেক্ষা (API রেট লিমিটের জন্য)
+                        time.sleep(2)
+                    else:
+                        time.sleep(1)
+                else:
+                    # API থেকে ত্রুটি এলেও চেষ্টা চালিয়ে যান
+                    error_msg = data.get('msg', 'Unknown error')
+                    if data.get('code') == 403:
+                        bot.send_message(chat_id, "⚠️ ব্যালেন্স কম! রিচার্জ করুন।")
+                        break
+                    elif data.get('code') == 904:
+                        bot.send_message(chat_id, f"⚠️ প্রোজেক্ট আইডি {DEFAULT_PID} সঠিক নয়!")
+                        break
+                    time.sleep(2)
+                
+            except Exception as e:
+                print(f"❌ জেনারেশন এরর: {e}")
+                time.sleep(2)
         
+        # থ্রেড শেষে ক্লিনআপ
+        if str(chat_id) in running_threads:
+            del running_threads[str(chat_id)]
+        
+        # শেষ স্ট্যাটাস
         try:
             bot.edit_message_text(
-                f"✅ *নাম্বার সংগ্রহ শেষ!*\n"
+                f"🛑 *নাম্বার জেনারেশন বন্ধ!*\n\n"
                 f"🌍 দেশ: {country['name']}\n"
                 f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
-                f"📊 পেয়েছে: {success_count}টি\n"
-                f"🔍 OTP মনিটরিং চলছে...",
+                f"📊 মোট নাম্বার: {total_numbers}টি\n"
+                f"🔍 সব OTP মনিটরিং চলছে...",
                 chat_id,
                 status_msg.message_id,
                 parse_mode='Markdown'
@@ -649,38 +676,20 @@ def get_multiple_numbers(chat_id, count, user):
         except:
             pass
         
-        if success_count > 0:
-            numbers_text = "\n".join([f"📱 `{num}`" for num in numbers])
-            bot.send_message(chat_id, 
-                f"✅ *{success_count}টি নাম্বার পেলাম!*\n\n{numbers_text}\n\n"
-                f"🌍 দেশ: {country['name']}\n"
-                f"📌 প্রোজেক্ট: `{DEFAULT_PID}`\n"
-                f"⏰ ৫ মিনিট ভ্যালিড\n"
-                f"🔍 *OTP আসলেই অটো নোটিফিকেশন পাবেন*\n"
-                f"🤖 কোনো বাটন ক্লিক করতে হবে না!", 
-                parse_mode='Markdown'
-            )
-            
+        if total_numbers > 0:
+            # অ্যাক্টিভ নাম্বার দেখান
             markup = types.InlineKeyboardMarkup(row_width=2)
-            for num in numbers[:10]:
-                markup.add(types.InlineKeyboardButton(f"📱 {num[-4:]}", callback_data=f"check_{num}"))
+            numbers = user_data.get(str(chat_id), {}).get('numbers', [])[-10:]  # সর্বশেষ ১০টি
+            for num_data in numbers:
+                markup.add(types.InlineKeyboardButton(f"📱 {num_data['phone'][-4:]}", callback_data=f"check_{num_data['phone']}"))
             markup.add(types.InlineKeyboardButton("📊 সব স্ট্যাটাস", callback_data="all_status"))
             markup.add(types.InlineKeyboardButton("🗑️ ক্লিয়ার", callback_data="clear_all"))
-            bot.send_message(chat_id, "👇 ডিটেইলস:", reply_markup=markup)
-        else:
-            bot.send_message(chat_id, 
-                f"❌ *কোনো নাম্বার পাইনি!*\n\n"
-                f"💡 *কারণ:*\n"
-                f"• {MAX_RETRIES} বার চেষ্টা করেও নাম্বার পাওয়া যায়নি\n"
-                f"• API তে নাম্বার ফাকা থাকতে পারে\n\n"
-                f"📌 *পরামর্শ:*\n"
-                f"• ১-২ মিনিট পর আবার চেষ্টা করুন\n"
-                f"• অন্য দেশ ট্রাই করুন\n"
-                f"• ব্যালেন্স চেক করুন (/balance)"
-            )
-            
+            bot.send_message(chat_id, "👇 *সব নাম্বার দেখুন:*", parse_mode='Markdown', reply_markup=markup)
+        
     except Exception as e:
-        bot.send_message(chat_id, f"❌ {str(e)}")
+        bot.send_message(chat_id, f"❌ জেনারেশন থ্রেড ত্রুটি: {str(e)}")
+        if str(chat_id) in running_threads:
+            del running_threads[str(chat_id)]
 
 # ============= OTP মনিটরিং (অটো রিসিভ) =============
 def start_monitoring(chat_id, phone_number, user_identifier):
@@ -696,7 +705,6 @@ def start_monitoring(chat_id, phone_number, user_identifier):
 
 def monitor_otp(chat_id, phone_number, user_identifier):
     start_time = time.time()
-    last_msg_count = 0
     chat_id_str = str(chat_id)
     
     pid = DEFAULT_PID
@@ -709,15 +717,6 @@ def monitor_otp(chat_id, phone_number, user_identifier):
                 break
     
     print(f"👀 OTP মনিটরিং: {phone_number} (PID: {pid})")
-    
-    # শুধু ইউজারকে জানান (গ্রুপে নয়)
-    bot.send_message(chat_id, 
-        f"🔍 *OTP মনিটরিং সক্রিয়!*\n\n"
-        f"📱 নাম্বার: `{phone_number}`\n"
-        f"👤 ইউজার: {user_identifier}\n"
-        f"⏳ OTP আসলেই অটো নোটিফিকেশন পাবেন",
-        parse_mode='Markdown'
-    )
     
     while time.time() - start_time < OTP_TIMEOUT:
         try:
@@ -742,7 +741,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
                                 num_data['full_message'] = otp_code
                                 break
                     
-                    # OTP মেসেজ তৈরি (শুধু OTP)
+                    # OTP মেসেজ তৈরি
                     otp_message = (
                         f"🔔 *OTP পাওয়া গেছে!*\n\n"
                         f"📱 নাম্বার: `{phone_number}`\n"
@@ -756,7 +755,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
                     # ১. ইউজারের কাছে পাঠান
                     bot.send_message(chat_id, otp_message, parse_mode='Markdown')
                     
-                    # ২. শুধু OTP গ্রুপে পাঠান (টাইমআউট/অন্যান্য মেসেজ নয়)
+                    # ২. OTP গ্রুপে পাঠান
                     if GROUP_ID:
                         try:
                             bot.send_message(GROUP_ID, otp_message, parse_mode='Markdown')
@@ -765,18 +764,7 @@ def monitor_otp(chat_id, phone_number, user_identifier):
                             print(f"⚠️ গ্রুপে OTP পাঠাতে ব্যর্থ: {e}")
                     
                     print(f"✅ OTP পাওয়া গেছে: {phone_number} -> {otp_code} ({user_identifier})")
-                    break  # OTP পেলে মনিটরিং বন্ধ করুন
-            
-            elif data.get('code') == 908:
-                pass
-            elif data.get('code') == 405:
-                # SMS পাওয়া যায়নি - শুধু ইউজারকে জানান (গ্রুপে নয়)
-                bot.send_message(chat_id, 
-                    f"⚠️ {phone_number} এর জন্য SMS পাওয়া যায়নি\n"
-                    f"📌 অন্য সার্ভিস থেকে OTP পাঠানোর চেষ্টা করুন",
-                    parse_mode='Markdown'
-                )
-                break
+                    break
             
             time.sleep(OTP_CHECK_INTERVAL)
             
@@ -784,19 +772,14 @@ def monitor_otp(chat_id, phone_number, user_identifier):
             print(f"⚠️ OTP মনিটরিং এরর: {e}")
             time.sleep(OTP_CHECK_INTERVAL)
     
-    # টাইমআউট হলে শুধু ইউজারকে জানান (গ্রুপে নয়)
+    # টাইমআউট হলে
     if time.time() - start_time >= OTP_TIMEOUT:
         timeout_msg = (
             f"⏰ *OTP মনিটরিং টাইমআউট!*\n\n"
             f"📱 নাম্বার: `{phone_number}`\n"
             f"👤 ইউজার: {user_identifier}\n"
-            f"⏳ {OTP_TIMEOUT//60} মিনিট হয়ে গেছে, OTP পাওয়া যায়নি\n\n"
-            f"💡 *পরামর্শ:*\n"
-            f"• নতুন নাম্বার নিয়ে চেষ্টা করুন\n"
-            f"• OTP পুনরায় পাঠানোর চেষ্টা করুন"
+            f"⏳ {OTP_TIMEOUT//60} মিনিট হয়ে গেছে, OTP পাওয়া যায়নি"
         )
-        
-        # শুধু ইউজারকে পাঠান (গ্রুপে নয়)
         bot.send_message(chat_id, timeout_msg, parse_mode='Markdown')
     
     thread_key = f"{chat_id}_{phone_number}"
@@ -912,15 +895,15 @@ def show_help(message):
         f"🆔 *আপনার আইডি:* `{user_id}`\n\n"
         f"🔍 **Search Country** - নাম/শর্টকাট দিয়ে দেশ খুঁজুন\n"
         f"   যেমন: `bd`, `bangladesh`, `us`, `india`, `uk`\n"
-        f"📱 **Get Number** - নাম্বার নিন (৫ মিনিট ভ্যালিড)\n"
-        f"   ⏳ *নাম্বার না পাওয়া পর্যন্ত চেষ্টা করবে*\n"
+        f"📱 **Get Number** - নাম্বার নেওয়া শুরু করুন (অটোমেটিক)\n"
+        f"   ⏳ *স্টপ না করা পর্যন্ত নাম্বার আসতে থাকবে*\n"
+        f"🛑 **Stop Getting Numbers** - নাম্বার জেনারেশন বন্ধ করুন\n"
         f"💰 **Balance** - ব্যালেন্স চেক\n"
         f"📊 **Status** - স্ট্যাটাস দেখুন\n"
         f"📜 **Active Numbers** - অ্যাক্টিভ নাম্বার দেখুন\n"
         f"🗑️ **Clear All** - সব ক্লিয়ার\n\n"
         f"📌 *প্রোজেক্ট আইডি:* `{DEFAULT_PID}`\n"
         f"💰 *পয়েন্ট খরচ:* ১০০\n"
-        f"🔄 *সর্বোচ্চ চেষ্টা:* {MAX_RETRIES} বার\n"
         f"⏱️ *OTP চেক ইন্টারভাল:* {OTP_CHECK_INTERVAL} সেকেন্ড\n"
         f"🌍 *মোট {len(COUNTRIES)}টি দেশ উপলব্ধ*\n\n"
         f"✨ *অটো OTP:* OTP আসলেই নিজে থেকেই চলে আসবে!\n"
@@ -935,7 +918,6 @@ if __name__ == "__main__":
     print(f"👤 ইউজারনাম: {USERNAME}")
     print(f"📌 প্রোজেক্ট আইডি: {DEFAULT_PID}")
     print(f"💰 পয়েন্ট খরচ: ১০০")
-    print(f"🔄 সর্বোচ্চ চেষ্টা: {MAX_RETRIES} বার")
     print(f"⏱️ OTP চেক ইন্টারভাল: {OTP_CHECK_INTERVAL} সেকেন্ড")
     print(f"📢 OTP গ্রুপ: {GROUP_ID}")
     print(f"👥 অনুমোদিত ইউজার: {len(ALLOWED_USERS) if ALLOWED_USERS else 'সবাই'}")
